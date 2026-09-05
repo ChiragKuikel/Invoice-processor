@@ -1,0 +1,2 @@
+# All markdown docs are local-only — never push to remote
+*.md
