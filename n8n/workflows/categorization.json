@@ -1,0 +1,325 @@
+{
+  "connections": {
+    "Build Categorization Prompt": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Gemini Categorize",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Check Anomaly": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Decide Status",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Decide Status": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Update Invoice",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Every 2 Minutes": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Fetch Processing Invoices",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Fetch Processing Invoices": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Split Invoices",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Fetch Vendor Stats": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Check Anomaly",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Gemini Categorize": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Parse Category Response",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Parse Category Response": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Fetch Vendor Stats",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Split Invoices": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Build Categorization Prompt",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "name": "Invoice Categorization",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "Every 2 Minutes",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "position": [
+        240,
+        300
+      ],
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2
+    },
+    {
+      "id": "fetch-processing",
+      "name": "Fetch Processing Invoices",
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "method": "GET",
+        "options": {
+          "timeout": 30000
+        },
+        "sendHeaders": true,
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices?status=eq.processing&select=id,vendor_name,total,raw_ocr_text,flags&limit=5"
+      },
+      "position": [
+        460,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "split-invoices",
+      "name": "Split Invoices",
+      "parameters": {
+        "jsCode": "// Handle both array and single object (HTTP node auto-splits)\nconst items = $input.all();\nconst invoices = [];\nfor (const item of items) {\n  const json = item.json;\n  if (Array.isArray(json)) {\n    invoices.push(...json);\n  } else {\n    invoices.push(json);\n  }\n}\nif (invoices.length === 0) return [];\nreturn invoices.map(inv => ({ json: inv }));"
+      },
+      "position": [
+        680,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "build-prompt",
+      "name": "Build Categorization Prompt",
+      "parameters": {
+        "jsCode": "const invoice = $input.first().json;\nconst ocrText = invoice.raw_ocr_text || '';\nconst vendor = invoice.vendor_name || 'Unknown';\n\nconst prompt = `You are an invoice categorization system. Given the following invoice OCR text, categorize the expense and provide a human-readable reasoning.\n\nOCR Text:\n---\n${ocrText}\n---\n\nReturn ONLY valid JSON with these fields:\n{\n  \"category\": \"string — one of: Cloud Infrastructure, Software SaaS, Office Supplies, Travel, Professional Services, Marketing, Utilities, Hardware, Hosting, Communication, Other\",\n  \"category_confidence\": number between 0 and 1,\n  \"is_recurring\": boolean,\n  \"reasoning\": \"string — 1-2 sentence explanation of why this category was chosen\"\n}\n\nRules:\n- Choose the most specific category that fits.\n- is_recurring = true if this looks like a subscription or repeating service.\n- Return ONLY the JSON object, no markdown fences, no explanation.`;\n\nreturn [{\n  json: {\n    invoiceId: invoice.id,\n    vendor: invoice.vendor_name,\n    total: invoice.total,\n    flags: invoice.flags || [],\n    prompt\n  }\n}];"
+      },
+      "position": [
+        900,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "gemini-categorize",
+      "name": "Gemini Categorize",
+      "parameters": {
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": {{ JSON.stringify($json.prompt) }}\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"maxOutputTokens\": 1024\n  }\n}",
+        "method": "POST",
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={{ $env.GEMINI_API_KEY }}"
+      },
+      "position": [
+        1120,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "parse-category",
+      "name": "Parse Category Response",
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst prev = $('Build Categorization Prompt').first().json;\n\nlet text = '';\ntry {\n  text = response.candidates[0].content.parts[0].text;\n} catch (e) {\n  throw new Error(`Gemini response unexpected: ${JSON.stringify(response)}`);\n}\n\nlet cleaned = text.trim();\nif (cleaned.startsWith('```')) {\n  cleaned = cleaned.replace(/^```(?:json)?\\n?/, '').replace(/\\n?```$/, '').trim();\n}\n\nlet category;\ntry {\n  category = JSON.parse(cleaned);\n} catch (e) {\n  throw new Error(`Failed to parse category JSON: ${cleaned.substring(0, 200)}`);\n}\n\nreturn [{\n  json: {\n    invoiceId: prev.invoiceId,\n    vendor: prev.vendor,\n    total: prev.total,\n    existingFlags: prev.flags,\n    category: category.category,\n    category_confidence: category.category_confidence,\n    is_recurring: category.is_recurring,\n    reasoning: category.reasoning\n  }\n}];"
+      },
+      "position": [
+        1340,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "alwaysOutputData": true,
+      "id": "fetch-vendor-stats",
+      "name": "Fetch Vendor Stats",
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "method": "GET",
+        "options": {
+          "timeout": 15000
+        },
+        "sendHeaders": true,
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/vendor_stats?vendor_name=eq.{{ $json.vendor }}&select=avg_monthly_amount_6mo,expense_count"
+      },
+      "position": [
+        1560,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "check-anomaly",
+      "name": "Check Anomaly",
+      "parameters": {
+        "jsCode": "const stats = $input.first().json;\nconst prev = $('Parse Category Response').first().json;\n\nlet anomalyNote = null;\nconst flags = [...(prev.existingFlags || [])];\n\nconst statsArray = Array.isArray(stats) ? stats : [stats];\nconst firstStat = statsArray.length > 0 ? statsArray[0] : null;\n\nif (firstStat && firstStat.avg_monthly_amount_6mo) {\n  const avg = firstStat.avg_monthly_amount_6mo;\n  const current = prev.total || 0;\n  const deviation = Math.abs(current - avg) / avg;\n\n  if (deviation > 0.5) {\n    const pct = Math.round(deviation * 100);\n    const direction = current > avg ? 'above' : 'below';\n    anomalyNote = `Amount is ${pct}% ${direction} the 6-month average of ${avg} for ${prev.vendor}`;\n    if (!flags.includes('anomalous_amount')) {\n      flags.push('anomalous_amount');\n    }\n  }\n} else {\n  anomalyNote = `No vendor history for ${prev.vendor} — first invoice from this vendor`;\n}\n\nreturn [{\n  json: {\n    invoiceId: prev.invoiceId,\n    category: prev.category,\n    category_confidence: prev.category_confidence,\n    is_recurring: prev.is_recurring,\n    reasoning: prev.reasoning,\n    anomaly_note: anomalyNote,\n    flags\n  }\n}];"
+      },
+      "position": [
+        1780,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "decide-status",
+      "name": "Decide Status",
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\n// If no flags were added and confidence is high, auto-approve\nconst hasFlags = data.flags && data.flags.length > 0;\nconst highConfidence = (data.category_confidence || 0) >= 0.8;\nlet status = 'processing';\n\nif (!hasFlags && highConfidence) {\n  status = 'auto_approved';\n} else {\n  status = 'flagged';\n}\n\nreturn [{\n  json: {\n    ...data,\n    status\n  }\n}];"
+      },
+      "position": [
+        2000,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "update-invoice",
+      "name": "Update Invoice",
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "jsonBody": "={\n  \"category\": {{ JSON.stringify($json.category) }},\n  \"category_confidence\": {{ $json.category_confidence }},\n  \"is_recurring\": {{ $json.is_recurring }},\n  \"anomaly_note\": {{ JSON.stringify($json.anomaly_note) }},\n  \"flags\": {{ JSON.stringify($json.flags) }},\n  \"status\": {{ JSON.stringify($json.status) }}\n}",
+        "method": "PATCH",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices?id=eq.{{ $json.invoiceId }}"
+      },
+      "position": [
+        2220,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    }
+  ],
+  "settings": {
+    "errorWorkflow": "ClHRUjdAsqCblMGw",
+    "executionOrder": "v1"
+  }
+}

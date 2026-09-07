@@ -1,106 +1,185 @@
 {
+  "connections": {
+    "Extract File": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "OCR.space",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Insert Invoice": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Respond OK",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "OCR.space": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Parse OCR",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Parse OCR": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Reattach File",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Reattach File": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Upload to Storage",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Upload to Storage": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Insert Invoice",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Extract File",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
   "name": "Invoice Ingestion",
   "nodes": [
     {
+      "id": "webhook-trigger",
+      "name": "Webhook",
       "parameters": {
         "httpMethod": "POST",
-        "path": "ingest",
         "options": {
           "rawBody": false
         },
+        "path": "ingest",
         "responseMode": "responseNode"
       },
-      "id": "webhook-trigger",
-      "name": "Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
       "position": [
         240,
         300
       ],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "webhookId": "invoice-ingest"
     },
     {
+      "id": "respond-ok",
+      "name": "Respond OK",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ { \"success\": true, \"message\": \"Invoice received\" } }}"
       },
-      "id": "respond-ok",
-      "name": "Respond OK",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
       "position": [
         1560,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
     },
     {
+      "id": "extract-file",
+      "name": "Extract File",
       "parameters": {
         "jsCode": "const item = $input.all()[0];\nconst b = item.binary?.data;\nif (!b) { throw new Error('No file uploaded. Expected binary data in \"data\" field.'); }\nconst originalName = b.fileName || `invoice-${Date.now()}`;\nconst mimeType = b.mimeType || 'application/pdf';\nconst fileExtension = (originalName.includes('.') ? originalName.split('.').pop() : 'pdf').toLowerCase();\nconst safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_+/, '').slice(-80);\nconst objectKey = `${Date.now()}-${safeName || 'invoice.' + fileExtension}`;\nreturn [{ json: { originalName, mimeType, fileExtension, objectKey }, binary: { data: b } }];"
       },
-      "id": "extract-file",
-      "name": "Extract File",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         460,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.ocr.space/parse/image",
-        "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "parameterType": "formBinaryData",
-              "name": "file",
-              "inputDataFieldName": "data"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 60000
-        },
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth"
-      },
-      "id": "ocr-request",
-      "name": "OCR.space",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        680,
-        300
-      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "URWMKEVOHi8jWI8x",
           "name": "OCR.space API Key"
         }
-      }
+      },
+      "id": "ocr-request",
+      "name": "OCR.space",
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "inputDataFieldName": "data",
+              "name": "file",
+              "parameterType": "formBinaryData"
+            }
+          ]
+        },
+        "contentType": "multipart-form-data",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "url": "https://api.ocr.space/parse/image"
+      },
+      "position": [
+        680,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
     },
     {
+      "id": "parse-ocr",
+      "name": "Parse OCR",
       "parameters": {
         "jsCode": "// Parse OCR response and extract raw text\nconst ocrResult = $input.first().json;\n\nif (!ocrResult || ocrResult.IsErroredOnProcessing) {\n  throw new Error(`OCR failed: ${ocrResult?.ErrorMessage || 'Unknown error'}`);\n}\n\n// Extract text from the first parsed page\nconst parsedResults = ocrResult.ParsedResults || [];\nif (parsedResults.length === 0) {\n  throw new Error('OCR returned no parsed results');\n}\n\nconst rawText = parsedResults\n  .map(page => page.ParsedText)\n  .filter(Boolean)\n  .join('\\n\\n');\n\nif (!rawText || rawText.trim().length === 0) {\n  throw new Error('OCR returned empty text');\n}\n\nreturn [{\n  json: {\n    rawText: rawText.trim(),\n    pageCount: parsedResults.length,\n    ocrConfidence: parsedResults[0]?.FileParseExitCode\n  }\n}];"
       },
-      "id": "parse-ocr",
-      "name": "Parse OCR",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         900,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
+      "id": "upload-storage",
+      "name": "Upload to Storage",
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/invoices/{{ $('Extract File').item.json.objectKey }}",
-        "sendHeaders": true,
+        "contentType": "binaryData",
         "headerParameters": {
           "parameters": [
             {
@@ -121,27 +200,26 @@
             }
           ]
         },
-        "sendBody": true,
-        "contentType": "binaryData",
         "inputDataFieldName": "data",
+        "method": "POST",
         "options": {
           "timeout": 60000
-        }
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/invoices/{{ $('Extract File').item.json.objectKey }}"
       },
-      "id": "upload-storage",
-      "name": "Upload to Storage",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
       "position": [
         1120,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
     },
     {
+      "id": "insert-invoice",
+      "name": "Insert Invoice",
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices",
-        "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
@@ -162,117 +240,39 @@
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
         "jsonBody": "={\n  \"source_file_url\": {{ JSON.stringify($env.SUPABASE_URL + '/storage/v1/object/invoices/' + $('Extract File').item.json.objectKey) }},\n  \"raw_ocr_text\": {{ JSON.stringify($('Parse OCR').item.json.rawText) }},\n  \"status\": \"pending\"\n}",
+        "method": "POST",
         "options": {
           "timeout": 30000
-        }
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices"
       },
-      "id": "insert-invoice",
-      "name": "Insert Invoice",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
       "position": [
         1340,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
     },
     {
+      "id": "reattach-file",
+      "name": "Reattach File",
       "parameters": {
         "jsCode": "// HTTP/Code nodes drop input binary; pull the original file back for the upload.\nreturn [{ json: $input.first().json, binary: { data: $('Extract File').first().binary.data } }];"
       },
-      "id": "reattach-file",
-      "name": "Reattach File",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         1010,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     }
   ],
-  "connections": {
-    "Webhook": {
-      "main": [
-        [
-          {
-            "node": "Extract File",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract File": {
-      "main": [
-        [
-          {
-            "node": "OCR.space",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "OCR.space": {
-      "main": [
-        [
-          {
-            "node": "Parse OCR",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse OCR": {
-      "main": [
-        [
-          {
-            "node": "Reattach File",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Upload to Storage": {
-      "main": [
-        [
-          {
-            "node": "Insert Invoice",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Insert Invoice": {
-      "main": [
-        [
-          {
-            "node": "Respond OK",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Reattach File": {
-      "main": [
-        [
-          {
-            "node": "Upload to Storage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
   "settings": {
-    "executionOrder": "v1",
-    "errorWorkflow": "ClHRUjdAsqCblMGw"
+    "errorWorkflow": "ClHRUjdAsqCblMGw",
+    "executionOrder": "v1"
   }
 }

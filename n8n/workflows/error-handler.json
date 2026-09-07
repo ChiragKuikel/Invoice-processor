@@ -1,67 +1,132 @@
 {
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Extract Error Details",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Extract Error Details": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Has Invoice ID?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Format Notification": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Notify Slack",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Has Invoice ID?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Update Invoice Status",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Format Notification",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Update Invoice Status": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Format Notification",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
   "name": "Ingestion Error Handler",
   "nodes": [
     {
-      "parameters": {},
       "id": "error-trigger",
       "name": "Error Trigger",
-      "type": "n8n-nodes-base.errorTrigger",
-      "typeVersion": 1,
+      "parameters": {},
       "position": [
         240,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1
     },
     {
-      "parameters": {
-        "jsCode": "// Extract error details from the failed execution\nconst errorData = $input.first().json;\n\nconst workflowId = errorData.workflow?.id || 'unknown';\nconst workflowName = errorData.workflow?.name || 'Unknown Workflow';\nconst executionId = errorData.execution?.id || 'unknown';\nconst errorMessage = errorData.execution?.error?.message || 'Unknown error';\nconst nodeExecutionData = errorData.execution?.data?.resultData?.runData;\n\n// Find which node failed\nlet failedNode = 'unknown';\nif (nodeExecutionData) {\n  for (const nodeName of Object.keys(nodeExecutionData)) {\n    const runs = nodeExecutionData[nodeName];\n    const lastRun = runs && runs.length > 0 ? runs[runs.length - 1] : null;\n    if (lastRun?.error || lastRun?.data?.error) {\n      failedNode = nodeName;\n      break;\n    }\n  }\n}\n\n// Best-effort: recover an invoice id if the failing run carried one\n// (webhook body, or the Insert Invoice response before a later node failed)\nlet invoiceId = null;\nif (nodeExecutionData) {\n  const webhookRun = nodeExecutionData['Webhook']?.[0];\n  const webhookJson = webhookRun?.data?.main?.[0]?.[0]?.json;\n  if (webhookJson?.body?.invoiceId) invoiceId = webhookJson.body.invoiceId;\n  else if (webhookJson?.invoiceId) invoiceId = webhookJson.invoiceId;\n\n  const insertRun = nodeExecutionData['Insert Invoice']?.[0];\n  const insertJson = insertRun?.data?.main?.[0]?.[0]?.json;\n  const insertRow = Array.isArray(insertJson) ? insertJson[0] : insertJson;\n  if (!invoiceId && insertRow?.id) invoiceId = insertRow.id;\n}\n\nreturn [{\n  json: {\n    workflowId,\n    workflowName,\n    executionId,\n    failedNode,\n    errorMessage,\n    invoiceId,\n    timestamp: new Date().toISOString()\n  }\n}];"
-      },
       "id": "extract-error",
       "name": "Extract Error Details",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Extract error details from the failed execution\nconst errorData = $input.first().json;\n\nconst workflowId = errorData.workflow?.id || 'unknown';\nconst workflowName = errorData.workflow?.name || 'Unknown Workflow';\nconst executionId = errorData.execution?.id || 'unknown';\nconst errorMessage = errorData.execution?.error?.message || 'Unknown error';\nconst nodeExecutionData = errorData.execution?.data?.resultData?.runData;\n\n// Find which node failed\nlet failedNode = 'unknown';\nif (nodeExecutionData) {\n  for (const nodeName of Object.keys(nodeExecutionData)) {\n    const runs = nodeExecutionData[nodeName];\n    const lastRun = runs && runs.length > 0 ? runs[runs.length - 1] : null;\n    if (lastRun?.error || lastRun?.data?.error) {\n      failedNode = nodeName;\n      break;\n    }\n  }\n}\n\n// Best-effort: recover an invoice id if the failing run carried one\n// (webhook body, or the Insert Invoice response before a later node failed)\nlet invoiceId = null;\nif (nodeExecutionData) {\n  const webhookRun = nodeExecutionData['Webhook']?.[0];\n  const webhookJson = webhookRun?.data?.main?.[0]?.[0]?.json;\n  if (webhookJson?.body?.invoiceId) invoiceId = webhookJson.body.invoiceId;\n  else if (webhookJson?.invoiceId) invoiceId = webhookJson.invoiceId;\n\n  const insertRun = nodeExecutionData['Insert Invoice']?.[0];\n  const insertJson = insertRun?.data?.main?.[0]?.[0]?.json;\n  const insertRow = Array.isArray(insertJson) ? insertJson[0] : insertJson;\n  if (!invoiceId && insertRow?.id) invoiceId = insertRow.id;\n}\n\nreturn [{\n  json: {\n    workflowId,\n    workflowName,\n    executionId,\n    failedNode,\n    errorMessage,\n    invoiceId,\n    hasInvoiceId: Boolean(invoiceId),\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
       "position": [
         460,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
+      "id": "if-invoice-id",
+      "name": "Has Invoice ID?",
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "typeValidation": "strict"
-          },
           "combinator": "and",
           "conditions": [
             {
               "id": "has-invoice-id",
-              "leftValue": "={{ $json.invoiceId }}",
-              "rightValue": "",
+              "leftValue": "={{ $json.hasInvoiceId }}",
               "operator": {
-                "type": "string",
-                "operation": "exists",
-                "singleValue": true
-              }
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": true
             }
-          ]
+          ],
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          }
         },
         "options": {}
       },
-      "id": "if-invoice-id",
-      "name": "Has Invoice ID?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
       "position": [
         680,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
     },
     {
+      "continueOnFail": true,
+      "id": "update-status",
+      "name": "Update Invoice Status",
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/rpc/update_invoice_status",
-        "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
@@ -78,120 +143,56 @@
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
         "jsonBody": "={\n  \"p_invoice_id\": {{ JSON.stringify($json.invoiceId) }},\n  \"p_new_status\": \"error\",\n  \"p_actor\": \"n8n\",\n  \"p_reasoning\": {{ JSON.stringify($json.errorMessage) }}\n}",
+        "method": "POST",
         "options": {
           "timeout": 30000
-        }
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/rpc/update_invoice_status"
       },
-      "id": "update-status",
-      "name": "Update Invoice Status",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
       "position": [
         900,
         200
       ],
-      "continueOnFail": true
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
     },
     {
-      "parameters": {
-        "jsCode": "// Format error notification message\nconst e = $input.first().json;\n\nconst message = [\n  '\ud83d\udea8 *Invoice Ingestion Error*',\n  '',\n  `*Workflow:* ${e.workflowName}`,\n  `*Failed Node:* ${e.failedNode}`,\n  `*Error:* ${e.errorMessage}`,\n  `*Invoice:* ${e.invoiceId || '(no invoice row \u2014 failed before insert)'}`,\n  `*Time:* ${e.timestamp}`,\n  `*Execution ID:* ${e.executionId}`,\n  '',\n  'Check n8n execution logs for details.'\n].join('\\n');\n\nreturn [{\n  json: {\n    message,\n    subject: `Invoice Ingestion Failed: ${e.failedNode}`\n  }\n}];"
-      },
       "id": "format-message",
       "name": "Format Notification",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Format error notification message\nconst e = $input.first().json;\n\nconst message = [\n  '🚨 *Invoice Ingestion Error*',\n  '',\n  `*Workflow:* ${e.workflowName}`,\n  `*Failed Node:* ${e.failedNode}`,\n  `*Error:* ${e.errorMessage}`,\n  `*Invoice:* ${e.invoiceId || '(no invoice row — failed before insert)'}`,\n  `*Time:* ${e.timestamp}`,\n  `*Execution ID:* ${e.executionId}`,\n  '',\n  'Check n8n execution logs for details.'\n].join('\\n');\n\nreturn [{\n  json: {\n    message,\n    subject: `Invoice Ingestion Failed: ${e.failedNode}`\n  }\n}];"
+      },
       "position": [
         1120,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.message) }},\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": {{ JSON.stringify($json.message) }}\n      }\n    }\n  ]\n}",
-        "options": {}
-      },
+      "continueOnFail": true,
       "id": "notify-slack",
       "name": "Notify Slack",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "parameters": {
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.message) }},\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": {{ JSON.stringify($json.message) }}\n      }\n    }\n  ]\n}",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}"
+      },
       "position": [
         1340,
         300
       ],
-      "continueOnFail": true
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
     }
   ],
-  "connections": {
-    "Error Trigger": {
-      "main": [
-        [
-          {
-            "node": "Extract Error Details",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract Error Details": {
-      "main": [
-        [
-          {
-            "node": "Has Invoice ID?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Invoice ID?": {
-      "main": [
-        [
-          {
-            "node": "Update Invoice Status",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Format Notification",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Update Invoice Status": {
-      "main": [
-        [
-          {
-            "node": "Format Notification",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format Notification": {
-      "main": [
-        [
-          {
-            "node": "Notify Slack",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
   "settings": {
     "executionOrder": "v1"
   }

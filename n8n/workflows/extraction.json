@@ -1,7 +1,77 @@
 {
+  "connections": {
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Gemini Extract",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Every 2 Minutes": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Fetch Pending Invoices",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Fetch Pending Invoices": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Split Invoices",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Gemini Extract": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Parse Gemini Response",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Parse Gemini Response": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Update Invoice",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Split Invoices": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Build Prompt",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
   "name": "Invoice Extraction",
   "nodes": [
     {
+      "id": "schedule-trigger",
+      "name": "Every 2 Minutes",
       "parameters": {
         "rule": {
           "interval": [
@@ -12,20 +82,17 @@
           ]
         }
       },
-      "id": "schedule-trigger",
-      "name": "Every 2 Minutes",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
       "position": [
         240,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2
     },
     {
+      "id": "fetch-pending",
+      "name": "Fetch Pending Invoices",
       "parameters": {
-        "method": "GET",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices?status=eq.pending&select=id,raw_ocr_text,source_file_url&limit=5",
-        "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
@@ -42,85 +109,85 @@
             }
           ]
         },
+        "method": "GET",
         "options": {
           "timeout": 30000
-        }
+        },
+        "sendHeaders": true,
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices?status=eq.pending&select=id,raw_ocr_text,source_file_url&limit=5"
       },
-      "id": "fetch-pending",
-      "name": "Fetch Pending Invoices",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
       "position": [
         460,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
     },
     {
+      "id": "split-invoices",
+      "name": "Split Invoices",
       "parameters": {
         "jsCode": "// The HTTP Request node already emits one item per row for a JSON-array\n// response. Just drop the empty-response case (no `id`) and pass the rest.\nreturn $input.all().filter(i => i.json && i.json.id).map(i => ({ json: i.json }));"
       },
-      "id": "split-invoices",
-      "name": "Split Invoices",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         680,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
+      "id": "build-prompt",
+      "name": "Build Prompt",
       "parameters": {
         "jsCode": "const invoice = $json;\nconst ocrText = invoice.raw_ocr_text || '';\nconst prompt = `You are an invoice data extraction system. Extract structured data from the following OCR text of an invoice. Return ONLY valid JSON with no explanation text.\\n\\nOCR Text:\\n---\\n${ocrText}\\n---\\n\\nReturn a JSON object with exactly these fields:\\n{\\n  \"vendor_name\": \"string\",\\n  \"invoice_number\": \"string\",\\n  \"invoice_date\": \"string YYYY-MM-DD\",\\n  \"currency\": \"string 3-letter code\",\\n  \"subtotal\": number,\\n  \"tax\": number,\\n  \"total\": number,\\n  \"line_items\": [{ \"description\": \"string\", \"quantity\": number, \"amount\": number }],\\n  \"extraction_confidence\": number between 0 and 1\\n}\\n\\nRules:\\n- If a field is missing or unreadable, use null.\\n- For line_items, if no itemized list, use a single entry with the total as amount.\\n- extraction_confidence: 1.0 perfect, 0.9 minor issues, 0.7 some text unclear, 0.5 partially readable.\\n- Return ONLY the JSON object, no markdown fences, no explanation.`;\nreturn { json: { invoiceId: invoice.id, prompt, source_file_url: invoice.source_file_url } };",
         "mode": "runOnceForEachItem"
       },
-      "id": "build-prompt",
-      "name": "Build Prompt",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         900,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
-      "parameters": {
-        "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={{ $env.GEMINI_API_KEY }}",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": {{ JSON.stringify($json.prompt) }}\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"maxOutputTokens\": 2048\n  }\n}",
-        "options": {
-          "timeout": 60000
-        }
-      },
       "id": "gemini-call",
       "name": "Gemini Extract",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "parameters": {
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": {{ JSON.stringify($json.prompt) }}\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"maxOutputTokens\": 2048\n  }\n}",
+        "method": "POST",
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={{ $env.GEMINI_API_KEY }}"
+      },
       "position": [
         1120,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
     },
     {
+      "id": "parse-response",
+      "name": "Parse Gemini Response",
       "parameters": {
         "jsCode": "const response = $json;\nconst bp = $('Build Prompt').item.json;\nlet text;\ntry { text = response.candidates[0].content.parts[0].text; }\ncatch (e) { throw new Error('Gemini response format unexpected: ' + JSON.stringify(response).slice(0,300)); }\nlet cleaned = text.trim();\nif (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```(?:json)?\\n?/, '').replace(/\\n?```$/, '').trim();\nlet ex;\ntry { ex = JSON.parse(cleaned); }\ncatch (e) { throw new Error('Failed to parse Gemini output as JSON: ' + cleaned.slice(0,200)); }\nconst crypto = require('crypto');\nconst key = crypto.createHash('sha256').update(`${ex.vendor_name||''}|${ex.invoice_number||''}|${ex.total||0}`).digest('hex');\nreturn { json: {\n  invoiceId: bp.invoiceId,\n  source_file_url: bp.source_file_url,\n  vendor_name: ex.vendor_name ?? null,\n  invoice_number: ex.invoice_number ?? null,\n  invoice_date: ex.invoice_date ?? null,\n  currency: ex.currency ?? null,\n  subtotal: ex.subtotal ?? null,\n  tax: ex.tax ?? null,\n  total: ex.total ?? null,\n  line_items: ex.line_items ?? null,\n  extraction_confidence: ex.extraction_confidence ?? 0.5,\n  idempotency_key: key\n} };",
         "mode": "runOnceForEachItem"
       },
-      "id": "parse-response",
-      "name": "Parse Gemini Response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         1340,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
+      "id": "update-invoice",
+      "name": "Update Invoice",
       "parameters": {
-        "method": "PATCH",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices?id=eq.{{ $json.invoiceId }}",
-        "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
@@ -141,98 +208,26 @@
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
         "jsonBody": "={\n  \"vendor_name\": {{ JSON.stringify($json.vendor_name) }},\n  \"invoice_number\": {{ JSON.stringify($json.invoice_number) }},\n  \"invoice_date\": {{ JSON.stringify($json.invoice_date) }},\n  \"currency\": {{ JSON.stringify($json.currency) }},\n  \"subtotal\": {{ $json.subtotal }},\n  \"tax\": {{ $json.tax }},\n  \"total\": {{ $json.total }},\n  \"line_items\": {{ JSON.stringify($json.line_items) }},\n  \"extraction_confidence\": {{ $json.extraction_confidence }},\n  \"idempotency_key\": {{ JSON.stringify($json.idempotency_key) }},\n  \"status\": \"processing\"\n}",
+        "method": "PATCH",
         "options": {
           "timeout": 30000
-        }
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices?id=eq.{{ $json.invoiceId }}"
       },
-      "id": "update-invoice",
-      "name": "Update Invoice",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
       "position": [
         1560,
         300
-      ]
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
     }
   ],
-  "connections": {
-    "Every 2 Minutes": {
-      "main": [
-        [
-          {
-            "node": "Fetch Pending Invoices",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Fetch Pending Invoices": {
-      "main": [
-        [
-          {
-            "node": "Split Invoices",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Split Invoices": {
-      "main": [
-        [
-          {
-            "node": "Build Prompt",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Prompt": {
-      "main": [
-        [
-          {
-            "node": "Gemini Extract",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Gemini Extract": {
-      "main": [
-        [
-          {
-            "node": "Parse Gemini Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse Gemini Response": {
-      "main": [
-        [
-          {
-            "node": "Update Invoice",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
   "settings": {
-    "executionOrder": "v1",
-    "errorWorkflow": "ClHRUjdAsqCblMGw"
-  },
-  "staticData": {
-    "node:Every 2 Minutes": {
-      "recurrenceRules": []
-    }
+    "errorWorkflow": "ClHRUjdAsqCblMGw",
+    "executionOrder": "v1"
   }
 }
