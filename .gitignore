@@ -1,2 +1,7 @@
 # All markdown docs are local-only — never push to remote
 *.md
+
+# Secrets
+.env
+.env.local
+n8n/.env
