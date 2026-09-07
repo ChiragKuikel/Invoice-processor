@@ -1,0 +1,63 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:1.70.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      # n8n own database (separate from Supabase)
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=n8n-db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD}
+      # General
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - GENERIC_TIMEZONE=UTC
+      - TZ=UTC
+      # Task runners (required going forward; silences deprecation warning)
+      - N8N_RUNNERS_ENABLED=true
+      # Allow require('crypto') in Code nodes (extraction workflow: sha256 idempotency_key)
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
+      # Fixed encryption key so restarts don't invalidate stored credentials
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      # Public callback URL for webhook nodes
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      # Access to the n8n UI/API is gated by the owner account (user management,
+      # created on first visit). The old N8N_BASIC_AUTH_* vars were removed in
+      # n8n 1.0. Instance is further protected by binding to 127.0.0.1 only.
+      # Credentials for Supabase connection (used in workflow HTTP/Postgres nodes)
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SECRET_KEY=${SUPABASE_SECRET_KEY}
+      - SUPABASE_PUBLISHABLE_KEY=${SUPABASE_PUBLISHABLE_KEY}
+      # Slack Incoming Webhook for the error-handler workflow (empty = notifications skipped)
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      # Gemini API key for the extraction workflow (Step 5)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      n8n-db:
+        condition: service_healthy
+
+  n8n-db:
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=n8n
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=${N8N_DB_PASSWORD}
+    volumes:
+      - n8n_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  n8n_data:
+  n8n_db_data:
