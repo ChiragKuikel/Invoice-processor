@@ -1,0 +1,3 @@
+# Ignore n8n workflow exports that are not yet ready
+*.tmp
+*.backup
