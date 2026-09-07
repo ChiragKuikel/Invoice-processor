@@ -5,3 +5,6 @@
 .env
 .env.local
 n8n/.env
+
+# n8n env backups (contain live secrets)
+n8n/.env.bak.*
