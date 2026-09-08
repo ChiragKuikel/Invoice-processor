@@ -1,0 +1,8 @@
+[Unit]
+Description=Project1 — touch Supabase so the free project does not idle-pause
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart="%h/Projects/Personal/AI automations/Project1/scripts/supabase-keepalive.sh"

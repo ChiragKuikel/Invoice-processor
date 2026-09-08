@@ -1,0 +1,11 @@
+[Unit]
+Description=Project1 — run the n8n health check every 10 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+# Fire a missed run after the laptop wakes rather than skipping the interval.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

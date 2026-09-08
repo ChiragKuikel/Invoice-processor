@@ -1,0 +1,11 @@
+[Unit]
+Description=Project1 — n8n health check (alerts Slack on state change)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart="%h/Projects/Personal/AI automations/Project1/scripts/healthcheck.sh"
+# A failed check is a reported condition, not a unit failure; the script has
+# already sent the alert. Without this, systemd marks the unit failed and the
+# timer's own status becomes noisy.
+SuccessExitStatus=0 1

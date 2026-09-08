@@ -1,0 +1,13 @@
+[Unit]
+Description=Project1 — daily Supabase keepalive
+
+[Timer]
+# The build plan said weekly, but the free tier pauses after ~7 days idle and
+# this machine is a laptop that may be off for stretches. Daily leaves room for
+# several missed runs before the pause window is reached; weekly leaves none.
+OnCalendar=daily
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
