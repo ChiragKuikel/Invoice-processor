@@ -1,0 +1,655 @@
+{
+  "connections": {
+    "Append to Sheet": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Mark Sheet Exported",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Create Bill": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Mark QB Synced",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Create Vendor": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Prepare Bill Data",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Fetch Exportable Invoices",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Fetch Exportable Invoices": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Split Invoices",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Find Expense Account": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Find Vendor in QuickBooks",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Find Vendor in QuickBooks": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Match Vendor (case-insensitive)",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Mark Sheet Exported": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Needs QB Sync?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Match Vendor (case-insensitive)": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Vendor Exists?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Needs QB Sync?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Find Expense Account",
+            "type": "main"
+          }
+        ],
+        []
+      ]
+    },
+    "Needs Sheet Export?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Append to Sheet",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Needs QB Sync?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Prepare Bill Data": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Create Bill",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Split Invoices": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Needs Sheet Export?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Vendor Exists?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Create Bill",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Create Vendor",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "name": "Invoice Export",
+  "nodes": [
+    {
+      "id": "export-schedule-trigger",
+      "name": "Every 5 Minutes",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "position": [
+        240,
+        300
+      ],
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2
+    },
+    {
+      "id": "fetch-exportable",
+      "name": "Fetch Exportable Invoices",
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        },
+        "sendHeaders": true,
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices?status=in.(auto_approved,reviewed)&or=(sheet_exported_at.is.null,qb_synced_at.is.null)&select=id,vendor_name,invoice_number,invoice_date,total,currency,category,category_confidence,is_recurring,anomaly_note,status,sheet_exported_at,qb_synced_at&limit=1"
+      },
+      "position": [
+        460,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "split-invoices-export",
+      "name": "Split Invoices",
+      "parameters": {
+        "jsCode": "// Handle both array and single object (HTTP node auto-splits)\nconst items = $input.all();\nconst invoices = [];\nfor (const item of items) {\n  const json = item.json;\n  if (Array.isArray(json)) {\n    invoices.push(...json);\n  } else {\n    invoices.push(json);\n  }\n}\nif (invoices.length === 0) return [];\nreturn invoices.map(inv => ({ json: inv }));"
+      },
+      "position": [
+        680,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "needs-sheet-export",
+      "name": "Needs Sheet Export?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "sheet-not-exported",
+              "leftValue": "={{ $json.sheet_exported_at }}",
+              "operator": {
+                "operation": "empty",
+                "singleValue": true,
+                "type": "string"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        900,
+        300
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ZO5RKzvh1AUtNbpI",
+          "name": "Google Sheets account"
+        }
+      },
+      "id": "append-to-sheet",
+      "name": "Append to Sheet",
+      "parameters": {
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [],
+          "schema": [],
+          "value": {}
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{  $env.GOOGLE_SHEETS_SPREADSHEET_ID  }}"
+        },
+        "operation": "append",
+        "options": {},
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Sheet1"
+        }
+      },
+      "position": [
+        1120,
+        200
+      ],
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5
+    },
+    {
+      "id": "mark-sheet-exported",
+      "name": "Mark Sheet Exported",
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "={\n  \"sheet_exported_at\": {{ JSON.stringify(new Date().toISOString()) }}\n}",
+        "method": "PATCH",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices?id=eq.{{ $('Split Invoices').item.json.id }}"
+      },
+      "position": [
+        1340,
+        200
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "needs-qb-sync",
+      "name": "Needs QB Sync?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "qb-not-synced",
+              "leftValue": "={{ $('Split Invoices').item.json.qb_synced_at }}",
+              "operator": {
+                "operation": "empty",
+                "singleValue": true,
+                "type": "string"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        1560,
+        300
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "oAuth2Api": {
+          "id": "qV00F8uyyK7QjIg2",
+          "name": "QuickBooks Sandbox OAuth2"
+        }
+      },
+      "id": "find-vendor-qb",
+      "name": "Find Vendor in QuickBooks",
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        },
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "select Id, DisplayName from Vendor"
+            },
+            {
+              "name": "minorversion",
+              "value": "70"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "sendQuery": true,
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/{{ $env.QUICKBOOKS_REALM_ID }}/query"
+      },
+      "position": [
+        1780,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "vendor-exists",
+      "name": "Vendor Exists?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "vendor-found",
+              "leftValue": "={{ $json.vendorId }}",
+              "operator": {
+                "operation": "notEmpty",
+                "singleValue": true,
+                "type": "string"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        2000,
+        300
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "oAuth2Api": {
+          "id": "qV00F8uyyK7QjIg2",
+          "name": "QuickBooks Sandbox OAuth2"
+        }
+      },
+      "id": "create-vendor-qb",
+      "name": "Create Vendor",
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "={\n  \"DisplayName\": {{ JSON.stringify($('Split Invoices').item.json.vendor_name) }}\n}",
+        "method": "POST",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/{{ $env.QUICKBOOKS_REALM_ID }}/vendor?minorversion=70"
+      },
+      "position": [
+        2000,
+        420
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "credentials": {
+        "oAuth2Api": {
+          "id": "qV00F8uyyK7QjIg2",
+          "name": "QuickBooks Sandbox OAuth2"
+        }
+      },
+      "id": "create-bill-qb",
+      "name": "Create Bill",
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "={\n  \"VendorRef\": {\n    \"value\": \"{{ $json.vendorId }}\"\n  },\n  \"Line\": [\n    {\n      \"Amount\": {{ $json.invoice.total }},\n      \"DetailType\": \"AccountBasedExpenseLineDetail\",\n      \"AccountBasedExpenseLineDetail\": {\n        \"AccountRef\": {\n          \"value\": \"{{ $json.accountId }}\"\n        }\n      },\n      \"Description\": {{ JSON.stringify(($json.invoice.category || 'Uncategorized') + ' \\u2014 ' + ($json.invoice.anomaly_note || '')) }}\n    }\n  ],\n  \"PrivateNote\": {{ JSON.stringify('Auto-synced from Invoice Processor. Category: ' + ($json.invoice.category || 'Uncategorized')) }},\n  \"DocNumber\": {{ JSON.stringify($json.invoice.invoice_number) }}\n}",
+        "method": "POST",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/{{ $env.QUICKBOOKS_REALM_ID }}/bill?minorversion=70"
+      },
+      "position": [
+        2220,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "mark-qb-synced",
+      "name": "Mark QB Synced",
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SECRET_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "={\n  \"qb_synced_at\": {{ JSON.stringify(new Date().toISOString()) }},\n  \"qb_bill_id\": {{ JSON.stringify($json.Bill ? $json.Bill.Id : null) }}\n}",
+        "method": "PATCH",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices?id=eq.{{ $('Split Invoices').item.json.id }}"
+      },
+      "position": [
+        2440,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "match-vendor-ci",
+      "name": "Match Vendor (case-insensitive)",
+      "parameters": {
+        "jsCode": "const invoice = $('Split Invoices').item.json;\nconst vendors = ($json.QueryResponse && $json.QueryResponse.Vendor) || [];\nconst target = (invoice.vendor_name || '').trim().toLowerCase();\nconst match = vendors.find(v => (v.DisplayName || '').trim().toLowerCase() === target);\nconst acctResp = $('Find Expense Account').item.json;\nconst accountId = (acctResp.QueryResponse && acctResp.QueryResponse.Account && acctResp.QueryResponse.Account[0] && acctResp.QueryResponse.Account[0].Id) || null;\nreturn [{ json: { vendorId: match ? match.Id : null, invoice, accountId } }];"
+      },
+      "position": [
+        1890,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "prepare-bill-data",
+      "name": "Prepare Bill Data",
+      "parameters": {
+        "jsCode": "const prev = $('Match Vendor (case-insensitive)').item.json;\nreturn [{ json: { vendorId: $json.Vendor.Id, invoice: prev.invoice, accountId: prev.accountId } }];"
+      },
+      "position": [
+        2110,
+        420
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "oAuth2Api": {
+          "id": "qV00F8uyyK7QjIg2",
+          "name": "QuickBooks Sandbox OAuth2"
+        }
+      },
+      "id": "find-expense-account",
+      "name": "Find Expense Account",
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "method": "GET",
+        "options": {
+          "timeout": 30000
+        },
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=select Id from Account where Name = '{{ $env.QUICKBOOKS_DEFAULT_EXPENSE_ACCOUNT_NAME.replace(/'/g, \"\\\\'\") }}'"
+            },
+            {
+              "name": "minorversion",
+              "value": "70"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "sendQuery": true,
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/{{ $env.QUICKBOOKS_REALM_ID }}/query"
+      },
+      "position": [
+        1670,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    }
+  ],
+  "settings": {
+    "errorWorkflow": "ClHRUjdAsqCblMGw",
+    "executionOrder": "v1"
+  }
+}

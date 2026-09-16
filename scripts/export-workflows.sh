@@ -33,6 +33,7 @@ NAME_MAP = {
     "Invoice Extraction":     "extraction.json",
     "Invoice Categorization": "categorization.json",
     "Ingestion Error Handler": "error-handler.json",
+    "Invoice Export":         "export-sync.json",
 }
 
 def slug(name):
