@@ -37,6 +37,11 @@ services:
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
       # Gemini API key for the extraction workflow (Step 5)
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # Invoice Export workflow: Google Sheets + QuickBooks sandbox sync targets.
+      # OAuth credentials themselves live in n8n's credential store, not here.
+      - GOOGLE_SHEETS_SPREADSHEET_ID=${GOOGLE_SHEETS_SPREADSHEET_ID:-}
+      - QUICKBOOKS_REALM_ID=${QUICKBOOKS_REALM_ID:-}
+      - QUICKBOOKS_DEFAULT_EXPENSE_ACCOUNT_NAME=${QUICKBOOKS_DEFAULT_EXPENSE_ACCOUNT_NAME:-}
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:
