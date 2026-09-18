@@ -18,6 +18,15 @@ export interface Invoice {
   flags: string[];
   anomaly_note: string | null;
   idempotency_key: string | null;
+  // Email ingestion (migration 009). NULL on webhook/dashboard uploads.
+  source_message_id: string | null;
+  source_attachment_name: string | null;
+  source_email_from: string | null;
+  source_email_subject: string | null;
+  // Export tracking (migration 008).
+  sheet_exported_at: string | null;
+  qb_synced_at: string | null;
+  qb_bill_id: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
   created_at: string;

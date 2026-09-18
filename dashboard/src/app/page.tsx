@@ -5,6 +5,10 @@ import { supabase } from "@/lib/supabase";
 import { Invoice } from "@/lib/types";
 import Link from "next/link";
 
+// Shown next to the upload button so the email path is discoverable, not folklore.
+const INVOICE_EMAIL =
+  process.env.NEXT_PUBLIC_INVOICE_EMAIL ?? "chiragkuinkeldrive3+invoices@gmail.com";
+
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800",
   processing: "bg-blue-100 text-blue-800",
@@ -18,6 +22,10 @@ export default function HomePage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [filter, setFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState<{ ok: boolean; text: string } | null>(
+    null
+  );
 
   useEffect(() => {
     fetchInvoices();
@@ -37,6 +45,40 @@ export default function HomePage() {
     const { data } = await query;
     setInvoices(data || []);
     setLoading(false);
+  }
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // let the same file be picked again after an error
+    if (!file) return;
+
+    setUploading(true);
+    setUploadMsg(null);
+
+    try {
+      const body = new FormData();
+      body.append("file", file);
+
+      const res = await fetch("/api/upload", { method: "POST", body });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Upload failed.");
+
+      setUploadMsg({
+        ok: true,
+        text: `"${file.name}" accepted — it appears below once OCR finishes.`,
+      });
+      // Ingestion is async (the webhook answers on receipt), so give OCR and
+      // the row insert a moment before refreshing rather than showing an
+      // empty list and looking broken.
+      setTimeout(fetchInvoices, 4000);
+    } catch (err) {
+      setUploadMsg({
+        ok: false,
+        text: err instanceof Error ? err.message : "Upload failed.",
+      });
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function handleSignOut() {
@@ -59,6 +101,40 @@ export default function HomePage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6">
+        <div className="bg-white rounded-lg shadow p-4 mb-6 flex items-center gap-4 flex-wrap">
+          <label
+            className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+              uploading
+                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                : "bg-blue-600 text-white hover:bg-blue-700 cursor-pointer"
+            }`}
+          >
+            {uploading ? "Uploading…" : "Upload invoice"}
+            <input
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff"
+              className="hidden"
+              disabled={uploading}
+              onChange={handleUpload}
+            />
+          </label>
+
+          <span className="text-sm text-gray-500">
+            or forward it to{" "}
+            <span className="font-mono text-gray-700">{INVOICE_EMAIL}</span>
+          </span>
+
+          {uploadMsg && (
+            <span
+              className={`text-sm ${
+                uploadMsg.ok ? "text-green-700" : "text-red-700"
+              }`}
+            >
+              {uploadMsg.text}
+            </span>
+          )}
+        </div>
+
         <div className="flex gap-2 mb-6 flex-wrap">
           {["all", "pending", "processing", "flagged", "auto_approved", "reviewed", "error"].map(
             (s) => (

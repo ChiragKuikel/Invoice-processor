@@ -48,6 +48,10 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // `api/` is excluded so route handlers answer with JSON (401) instead of a
+    // 307 to /login — a redirect would hand an HTML page to fetch() and turn a
+    // clear "Not signed in." into a JSON parse error. Each API route checks the
+    // session itself.
+    "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
