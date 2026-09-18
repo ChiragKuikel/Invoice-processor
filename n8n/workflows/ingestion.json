@@ -11,12 +11,12 @@
         ]
       ]
     },
-    "Insert Invoice": {
+    "Gmail Trigger": {
       "main": [
         [
           {
             "index": 0,
-            "node": "Respond OK",
+            "node": "Extract File",
             "type": "main"
           }
         ]
@@ -81,6 +81,32 @@
   "name": "Invoice Ingestion",
   "nodes": [
     {
+      "id": "gmail-trigger",
+      "name": "Gmail Trigger",
+      "parameters": {
+        "filters": {
+          "q": "={{ $env.GMAIL_INVOICE_QUERY || 'has:attachment' }}"
+        },
+        "options": {
+          "downloadAttachments": true
+        },
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false
+      },
+      "position": [
+        240,
+        180
+      ],
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2
+    },
+    {
       "id": "webhook-trigger",
       "name": "Webhook",
       "parameters": {
@@ -89,38 +115,24 @@
           "rawBody": false
         },
         "path": "ingest",
-        "responseMode": "responseNode"
+        "responseMode": "onReceived"
       },
       "position": [
         240,
-        300
+        420
       ],
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "webhookId": "invoice-ingest"
     },
     {
-      "id": "respond-ok",
-      "name": "Respond OK",
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ { \"success\": true, \"message\": \"Invoice received\" } }}"
-      },
-      "position": [
-        1560,
-        300
-      ],
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1
-    },
-    {
       "id": "extract-file",
       "name": "Extract File",
       "parameters": {
-        "jsCode": "const item = $input.all()[0];\nconst b = item.binary?.data;\nif (!b) { throw new Error('No file uploaded. Expected binary data in \"data\" field.'); }\nconst originalName = b.fileName || `invoice-${Date.now()}`;\nconst mimeType = b.mimeType || 'application/pdf';\nconst fileExtension = (originalName.includes('.') ? originalName.split('.').pop() : 'pdf').toLowerCase();\nconst safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_+/, '').slice(-80);\nconst objectKey = `${Date.now()}-${safeName || 'invoice.' + fileExtension}`;\nreturn [{ json: { originalName, mimeType, fileExtension, objectKey }, binary: { data: b } }];"
+        "jsCode": "// Ingestion has three entry points and all of them land here:\n//   * Gmail Trigger  - one item per email, attachments in \"attachment_0\", ...\n//   * Webhook        - one file in binary field \"data\" (dashboard upload, curl)\n// Both are normalised to N items of { json: <metadata>, binary: { data } },\n// one item per invoice file, so every node downstream stays entry-point\n// agnostic and never has to know where the file came from.\n\nconst MIN_EMAIL_BYTES = 50 * 1024;  // below this it's a signature logo, not an invoice\nconst MAX_PER_EMAIL = 10;           // guard against an attachment bomb\nconst ALLOWED_MIME = /^(application\\/pdf|image\\/(png|jpe?g|tiff?|bmp|webp))$/i;\n\nfunction sizeOf(b) {\n  // Default binary mode keeps base64 in `.data`; 4 base64 chars == 3 bytes.\n  if (typeof b.data === 'string' && b.data.length) {\n    return Math.floor((b.data.length * 3) / 4);\n  }\n  const n = Number(b.fileSize);\n  return Number.isFinite(n) ? n : 0;\n}\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const json = item.json || {};\n  const binaries = item.binary || {};\n\n  // Only Gmail items carry a message id - that's how the two paths are told apart.\n  const messageId = json.id || json.messageId || null;\n  const headers = json.headers || {};\n  const emailFrom = headers.from || json.from || null;\n  const emailSubject = headers.subject || json.subject || null;\n  const isEmail = Boolean(messageId);\n\n  const keys = Object.keys(binaries);\n  if (keys.length === 0) {\n    // An email with no attachment is normal (body-only receipts, replies) and\n    // is not an error - there is simply nothing to ingest. A webhook POST with\n    // no file is a caller mistake and should be loud.\n    if (isEmail) continue;\n    throw new Error('No file uploaded. Expected binary data in \"data\" field.');\n  }\n\n  // Skip attachments already ingested from this same email. The unique index\n  // from migration 009 is the real guarantee; this pre-check only avoids\n  // burning an OCR + LLM call and an error-handler Slack ping on the common\n  // \"forwarded twice\" case. If the check itself fails we deliberately proceed:\n  // dropping an invoice is worse than risking a duplicate the DB will reject.\n  let seen = new Set();\n  if (isEmail) {\n    try {\n      const rows = await this.helpers.httpRequest({\n        method: 'GET',\n        url: `${$env.SUPABASE_URL}/rest/v1/invoices`,\n        qs: {\n          source_message_id: `eq.${messageId}`,\n          select: 'source_attachment_name',\n        },\n        headers: {\n          apikey: $env.SUPABASE_SECRET_KEY,\n          Authorization: `Bearer ${$env.SUPABASE_SECRET_KEY}`,\n        },\n        json: true,\n      });\n      seen = new Set((rows || []).map((r) => r.source_attachment_name).filter(Boolean));\n    } catch (e) {\n      console.log(`Dedupe pre-check failed (${e.message}); relying on the unique index.`);\n    }\n  }\n\n  let taken = 0;\n  for (const key of keys) {\n    if (taken >= MAX_PER_EMAIL) break;\n    const b = binaries[key];\n    if (!b) continue;\n\n    const mimeType = String(b.mimeType || 'application/pdf').split(';')[0].trim();\n    const originalName = b.fileName || `invoice-${Date.now()}-${out.length}`;\n\n    // Filters apply to email only. A file uploaded by hand through the\n    // dashboard or curl was chosen deliberately, so it is never second-guessed\n    // on size or type - otherwise a small test invoice would vanish silently.\n    if (isEmail) {\n      if (!ALLOWED_MIME.test(mimeType)) continue;\n      if (sizeOf(b) < MIN_EMAIL_BYTES) continue;   // signature logo, not an invoice\n      if (seen.has(originalName)) continue;        // already ingested from this email\n    }\n\n    const fileExtension = (originalName.includes('.') ? originalName.split('.').pop() : 'pdf').toLowerCase();\n    const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_+/, '').slice(-80);\n    // `out.length` disambiguates attachments that arrive in the same millisecond.\n    const objectKey = `${Date.now()}-${out.length}-${safeName || 'invoice.' + fileExtension}`;\n\n    out.push({\n      json: {\n        originalName,\n        mimeType,\n        fileExtension,\n        objectKey,\n        sourceMessageId: messageId,\n        sourceAttachmentName: isEmail ? originalName : null,\n        sourceEmailFrom: emailFrom,\n        sourceEmailSubject: emailSubject,\n      },\n      binary: { data: b },\n    });\n    taken++;\n  }\n}\n\n// Returning [] stops this run cleanly (an email of signature logos, or one\n// whose attachments were all ingested already) rather than pushing an empty\n// item into OCR and failing downstream for the wrong reason.\nreturn out;"
       },
       "position": [
-        460,
+        520,
         300
       ],
       "type": "n8n-nodes-base.code",
@@ -156,7 +168,7 @@
         "url": "https://api.ocr.space/parse/image"
       },
       "position": [
-        680,
+        760,
         300
       ],
       "type": "n8n-nodes-base.httpRequest",
@@ -166,10 +178,25 @@
       "id": "parse-ocr",
       "name": "Parse OCR",
       "parameters": {
-        "jsCode": "// Parse OCR response and extract raw text\nconst ocrResult = $input.first().json;\n\nif (!ocrResult || ocrResult.IsErroredOnProcessing) {\n  throw new Error(`OCR failed: ${ocrResult?.ErrorMessage || 'Unknown error'}`);\n}\n\n// Extract text from the first parsed page\nconst parsedResults = ocrResult.ParsedResults || [];\nif (parsedResults.length === 0) {\n  throw new Error('OCR returned no parsed results');\n}\n\nconst rawText = parsedResults\n  .map(page => page.ParsedText)\n  .filter(Boolean)\n  .join('\\n\\n');\n\nif (!rawText || rawText.trim().length === 0) {\n  throw new Error('OCR returned empty text');\n}\n\nreturn [{\n  json: {\n    rawText: rawText.trim(),\n    pageCount: parsedResults.length,\n    ocrConfidence: parsedResults[0]?.FileParseExitCode\n  }\n}];"
+        "jsCode": "// Runs once per attachment (runOnceForEachItem) so multi-invoice emails keep\n// item pairing intact - $input.first() would collapse every attachment onto\n// the first OCR result and file the wrong text against the wrong invoice.\nconst ocrResult = $json;\n\nif (!ocrResult || ocrResult.IsErroredOnProcessing) {\n  throw new Error(`OCR failed: ${ocrResult?.ErrorMessage || 'Unknown error'}`);\n}\n\nconst parsedResults = ocrResult.ParsedResults || [];\nif (parsedResults.length === 0) {\n  throw new Error('OCR returned no parsed results');\n}\n\nconst rawText = parsedResults\n  .map((page) => page.ParsedText)\n  .filter(Boolean)\n  .join('\\n\\n');\n\nif (!rawText || rawText.trim().length === 0) {\n  throw new Error('OCR returned empty text');\n}\n\nreturn {\n  json: {\n    rawText: rawText.trim(),\n    pageCount: parsedResults.length,\n    ocrConfidence: parsedResults[0]?.FileParseExitCode,\n  },\n};",
+        "mode": "runOnceForEachItem"
       },
       "position": [
-        900,
+        980,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "reattach-file",
+      "name": "Reattach File",
+      "parameters": {
+        "jsCode": "// HTTP/Code nodes drop input binary; pull this item's original file back for\n// the upload. `.item` (paired item), never `.first()` - with several invoices\n// in one email `.first()` would upload the same file against every row.\nreturn {\n  json: $json,\n  binary: { data: $('Extract File').item.binary.data },\n};",
+        "mode": "runOnceForEachItem"
+      },
+      "position": [
+        1200,
         300
       ],
       "type": "n8n-nodes-base.code",
@@ -210,7 +237,7 @@
         "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/invoices/{{ $('Extract File').item.json.objectKey }}"
       },
       "position": [
-        1120,
+        1420,
         300
       ],
       "type": "n8n-nodes-base.httpRequest",
@@ -240,7 +267,7 @@
             }
           ]
         },
-        "jsonBody": "={\n  \"source_file_url\": {{ JSON.stringify($env.SUPABASE_URL + '/storage/v1/object/invoices/' + $('Extract File').item.json.objectKey) }},\n  \"raw_ocr_text\": {{ JSON.stringify($('Parse OCR').item.json.rawText) }},\n  \"status\": \"pending\"\n}",
+        "jsonBody": "={\n  \"source_file_url\": {{ JSON.stringify($env.SUPABASE_URL + '/storage/v1/object/invoices/' + $('Extract File').item.json.objectKey) }},\n  \"raw_ocr_text\": {{ JSON.stringify($('Parse OCR').item.json.rawText) }},\n  \"source_message_id\": {{ JSON.stringify($('Extract File').item.json.sourceMessageId) }},\n  \"source_attachment_name\": {{ JSON.stringify($('Extract File').item.json.sourceAttachmentName) }},\n  \"source_email_from\": {{ JSON.stringify($('Extract File').item.json.sourceEmailFrom) }},\n  \"source_email_subject\": {{ JSON.stringify($('Extract File').item.json.sourceEmailSubject) }},\n  \"status\": \"pending\"\n}",
         "method": "POST",
         "options": {
           "timeout": 30000
@@ -251,24 +278,11 @@
         "url": "={{ $env.SUPABASE_URL }}/rest/v1/invoices"
       },
       "position": [
-        1340,
+        1660,
         300
       ],
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2
-    },
-    {
-      "id": "reattach-file",
-      "name": "Reattach File",
-      "parameters": {
-        "jsCode": "// HTTP/Code nodes drop input binary; pull the original file back for the upload.\nreturn [{ json: $input.first().json, binary: { data: $('Extract File').first().binary.data } }];"
-      },
-      "position": [
-        1010,
-        300
-      ],
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2
     }
   ],
   "settings": {

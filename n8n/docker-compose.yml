@@ -42,6 +42,9 @@ services:
       - GOOGLE_SHEETS_SPREADSHEET_ID=${GOOGLE_SHEETS_SPREADSHEET_ID:-}
       - QUICKBOOKS_REALM_ID=${QUICKBOOKS_REALM_ID:-}
       - QUICKBOOKS_DEFAULT_EXPENSE_ACCOUNT_NAME=${QUICKBOOKS_DEFAULT_EXPENSE_ACCOUNT_NAME:-}
+      # Gmail ingestion: search query the Gmail Trigger polls with. The OAuth2
+      # credential itself lives in n8n's credential store, not here.
+      - GMAIL_INVOICE_QUERY=${GMAIL_INVOICE_QUERY:-has:attachment}
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:
