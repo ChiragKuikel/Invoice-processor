@@ -208,7 +208,7 @@
             }
           ]
         },
-        "jsonBody": "={\n  \"vendor_name\": {{ JSON.stringify($json.vendor_name) }},\n  \"invoice_number\": {{ JSON.stringify($json.invoice_number) }},\n  \"invoice_date\": {{ JSON.stringify($json.invoice_date) }},\n  \"currency\": {{ JSON.stringify($json.currency) }},\n  \"subtotal\": {{ $json.subtotal }},\n  \"tax\": {{ $json.tax }},\n  \"total\": {{ $json.total }},\n  \"line_items\": {{ JSON.stringify($json.line_items) }},\n  \"extraction_confidence\": {{ $json.extraction_confidence }},\n  \"idempotency_key\": {{ JSON.stringify($json.idempotency_key) }},\n  \"status\": \"processing\"\n}",
+        "jsonBody": "={\n  \"vendor_name\": {{ JSON.stringify($json.vendor_name) }},\n  \"invoice_number\": {{ JSON.stringify($json.invoice_number) }},\n  \"invoice_date\": {{ JSON.stringify($json.invoice_date) }},\n  \"currency\": {{ JSON.stringify($json.currency) }},\n  \"subtotal\": {{ $json.subtotal }},\n  \"tax\": {{ $json.tax }},\n  \"total\": {{ $json.total }},\n  \"line_items\": {{ JSON.stringify($json.line_items) }},\n  \"extraction_confidence\": {{ $json.extraction_confidence }},\n  \"idempotency_key\": {{ JSON.stringify($json.idempotency_key) }},\n  \"extracted_at\": {{ JSON.stringify(new Date().toISOString()) }},\n  \"status\": \"processing\"\n}",
         "method": "PATCH",
         "options": {
           "timeout": 30000

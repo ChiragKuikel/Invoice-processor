@@ -30,6 +30,26 @@ export interface Invoice {
   reviewed_by: string | null;
   reviewed_at: string | null;
   created_at: string;
+  // 012_stage_timestamps_and_notes.sql
+  extracted_at: string | null;
+  validated_at: string | null;
+  notes: string | null;
+  // Computed columns (010_dashboard_derived_fields.sql) — derived in Postgres
+  // from the fields above, never recomputed client-side.
+  invoice_pipeline_stage: "received" | "extracted" | "needs_review" | "approved" | "synced" | "failed" | "unknown";
+  invoice_review_reason: "missing_invoice_number" | "amount_anomaly" | "other" | null;
+  invoice_quickbooks_status: "synced" | "not_sent" | "failed";
+}
+
+export interface VendorDirectoryEntry {
+  vendor_key: string;
+  display_name: string;
+  name_variants: string[];
+  has_name_variants: boolean;
+  invoice_count: number;
+  total_amount: number;
+  last_invoice_date: string | null;
+  last_seen_at: string;
 }
 
 export interface AuditLog {
